@@ -1,6 +1,8 @@
-# Vernissage Migrator
+# vernissage-migrator
 
 A shell script for migrating user data between [Vernissage](https://joinvernissage.org) instances — no Python, no Node.js, no dependencies beyond `curl` and `jq`.
+
+This script was initially created for my own purpose and is in no way connected to [Vernissage](https://joinvernissage.org) or any related code.
 
 ## Features
 
@@ -30,16 +32,16 @@ brew install jq
 ## Quick Start
 
 ```bash
-chmod +x vernissage_migrate.sh
+chmod +x vernissage-migrator.sh
 
 # 1. Export from source instance
-./vernissage_migrate.sh export \
+./vernissage-migrator.sh export \
   --source https://source-instance.example \
   --user myuser \
   --token "eyJ..."
 
 # 2. Configure CORS on the S3 bucket (once, before importing)
-./vernissage_migrate.sh cors \
+./vernissage-migrator.sh cors \
   --s3-endpoint https://hel1.your-objectstorage.com \
   --s3-bucket vernissage-assets \
   --s3-key YOUR_ACCESS_KEY \
@@ -47,7 +49,7 @@ chmod +x vernissage_migrate.sh
   --origin https://new-instance.example
 
 # 3. Import to target instance
-./vernissage_migrate.sh import \
+./vernissage-migrator.sh import \
   --target https://new-instance.example \
   --user myuser \
   --token "eyJ..."
@@ -80,7 +82,7 @@ curl -s -H "Authorization: Bearer eyJ..." \
 Exports profile, all photos and statuses, following and follower lists from the source instance. Photos are downloaded locally into `vernissage_export/photos/`.
 
 ```bash
-./vernissage_migrate.sh export \
+./vernissage-migrator.sh export \
   --source https://source-instance.example \
   --user USERNAME \
   --token "eyJ..."
@@ -115,7 +117,7 @@ vernissage_export/
 Imports photos and statuses to the target instance. Supports resuming after interruption.
 
 ```bash
-./vernissage_migrate.sh import \
+./vernissage-migrator.sh import \
   --target https://new-instance.example \
   --user USERNAME \
   --token "eyJ..."
@@ -137,9 +139,9 @@ The script handles rate limiting automatically: if the server responds with HTTP
 Generates a self-contained HTML photo album from an existing export. The gallery is automatically created at the end of every `export` and `full` run, but can also be regenerated standalone at any time.
 
 ```bash
-./vernissage_migrate.sh gallery
+./vernissage-migrator.sh gallery
 # or with a custom path:
-./vernissage_migrate.sh gallery --export-dir /path/to/vernissage_export
+./vernissage-migrator.sh gallery --export-dir /path/to/vernissage_export
 ```
 
 The output file `vernissage_export/gallery.html` opens directly in any browser — no server required. Features include:
@@ -159,7 +161,7 @@ The output file `vernissage_export/gallery.html` opens directly in any browser �
 Configures CORS on the S3 bucket so browsers can load images directly from object storage. Requires `awscli`.
 
 ```bash
-./vernissage_migrate.sh cors \
+./vernissage-migrator.sh cors \
   --s3-endpoint https://hel1.your-objectstorage.com \
   --s3-bucket vernissage-assets \
   --s3-key YOUR_ACCESS_KEY \
@@ -182,7 +184,7 @@ Configures CORS on the S3 bucket so browsers can load images directly from objec
 Runs export and import in a single step (password-based login only).
 
 ```bash
-./vernissage_migrate.sh full \
+./vernissage-migrator.sh full \
   --source https://source-instance.example \
   --source-user USERNAME \
   --source-password PASSWORD \
@@ -197,7 +199,7 @@ Every successfully published status is tracked in `vernissage_export/.imported_i
 
 ```bash
 # Re-run after interruption – already imported statuses are skipped
-./vernissage_migrate.sh import \
+./vernissage-migrator.sh import \
   --target https://new-instance.example \
   --user myuser \
   --token "eyJ..."
@@ -236,7 +238,7 @@ OVERRIDE_BIO=""
 You can also point to a custom export directory:
 
 ```bash
-EXPORT_DIR=/path/to/vernissage_export ./vernissage_migrate.sh import \
+EXPORT_DIR=/path/to/vernissage_export ./vernissage-migrator.sh import \
   --target https://new-instance.example \
   --user myuser \
   --token "eyJ..."
