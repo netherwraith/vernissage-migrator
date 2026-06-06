@@ -1,4 +1,4 @@
-# vernissage-migrator
+# Vernissage Migrator
 
 A shell script for migrating user data between [Vernissage](https://joinvernissage.org) instances — no Python, no Node.js, no dependencies beyond `curl` and `jq`.
 
