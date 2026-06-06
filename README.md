@@ -2,7 +2,7 @@
 
 A shell script for migrating user data between [Vernissage](https://joinvernissage.org) instances — no Python, no Node.js, no dependencies beyond `curl` and `jq`.
 
-This script was initially created for my own purpose and is in no way connected to [Vernissage](https://joinvernissage.org) or any related code.
+This script was initially created for my own purpose and is in no way officially connected to [Vernissage](https://joinvernissage.org) or any related code by [Marcin Czachurski](https://github.com/VernissageApp/VernissageServer/commits?author=mczachurski) and the wonderful platform he has developed with Vernissage. Use this script at your own risk!
 
 ## Features
 
