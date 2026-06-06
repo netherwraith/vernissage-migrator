@@ -629,170 +629,6 @@ do_import() {
 }
 
 # ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
-
-usage() {
-    cat <<EOF
-Usage:
-  $0 export  --source URL --user NAME [--password PASS | --token TOKEN] [--debug]
-  $0 import  --target URL --user NAME [--password PASS | --token TOKEN] [--email EMAIL] [--debug]
-  $0 full    --source URL --source-user NAME --source-password PASS \\
-              --target URL --target-user NAME --target-password PASS [--debug]
-  $0 cors    --s3-endpoint URL --s3-bucket NAME --s3-key KEY --s3-secret SECRET --origin URL
-  $0 gallery [--export-dir PATH]
-
-Options:
-  --password PASS   Password for direct login (only works with email+password accounts)
-  --token TOKEN     Pass a Bearer token directly (recommended, always works)
-                    Get the token: Browser → F12 → Network → any /api/v1/ request
-                    → Request Headers → copy "Authorization: Bearer eyJ..."
-  --email EMAIL     Email address for registration on the target instance (open instances only)
-  --debug           Verbose curl output
-  --export-dir PATH Path to export directory for the gallery subcommand (default: vernissage_export)
-
-CORS configuration (run once before importing):
-  $0 cors \\
-    --s3-endpoint https://your.s3.endpoint.tld\\
-    --s3-bucket vernissage-assets \\
-    --s3-key ACCESSKEY \\
-    --s3-secret SECRETKEY \\
-    --origin https://new-instance.example
-
-Resume after interruption:
-  Successfully imported statuses are tracked in '${EXPORT_DIR}/.imported_ids'.
-  Simply re-run the import command – already imported statuses will be skipped.
-  To start fresh: rm ${EXPORT_DIR}/.imported_ids
-
-Typical workflow:
-  Export:           $0 export --source URL --user NAME --token "eyJ..."
-  Set CORS:         $0 cors --s3-endpoint URL --s3-bucket NAME --s3-key K --s3-secret S --origin URL
-  Import:           $0 import --target URL --user NAME --token "eyJ..."
-  Resume:           $0 import --target URL --user NAME --token "eyJ..."  (just re-run)
-EOF
-    exit 1
-}
-
-[[ $# -lt 1 ]] && usage
-MODE="$1"; shift
-
-check_deps
-
-case "$MODE" in
-    export)
-        SOURCE="" USER="" PASSWORD="" TOKEN=""
-        while [[ $# -gt 0 ]]; do
-            case "$1" in
-                --source)   SOURCE="$2";   shift 2 ;;
-                --user)     USER="$2";     shift 2 ;;
-                --password) PASSWORD="$2"; shift 2 ;;
-                --token)    TOKEN="$2";    shift 2 ;;
-                --debug)    DEBUG=1;       shift   ;;
-                *) echo "Unknown option: $1"; usage ;;
-            esac
-        done
-        [[ -z "$SOURCE" || -z "$USER" ]] && usage
-        echo "=== EXPORT from ${SOURCE} ==="
-        if [[ -n "$TOKEN" ]]; then
-            API_BASE="${SOURCE%/}/api/v1"
-            API_TOKEN="$TOKEN"
-            echo "  Token provided directly."
-        else
-            [[ -z "$PASSWORD" ]] && usage
-            api_login "$SOURCE" "$USER" "$PASSWORD"
-        fi
-        do_export "$SOURCE" "$USER"
-        do_gallery "$EXPORT_DIR"
-        ;;
-
-    import)
-        TARGET="" USER="" EMAIL="" PASSWORD="" TOKEN=""
-        while [[ $# -gt 0 ]]; do
-            case "$1" in
-                --target)   TARGET="$2";   shift 2 ;;
-                --user)     USER="$2";     shift 2 ;;
-                --email)    EMAIL="$2";    shift 2 ;;
-                --password) PASSWORD="$2"; shift 2 ;;
-                --token)    TOKEN="$2";    shift 2 ;;
-                --debug)    DEBUG=1;       shift   ;;
-                *) echo "Unknown option: $1"; usage ;;
-            esac
-        done
-        [[ -z "$TARGET" || -z "$USER" ]] && usage
-        echo "=== IMPORT to ${TARGET} ==="
-        if [[ -n "$TOKEN" ]]; then
-            API_BASE="${TARGET%/}/api/v1"
-            API_TOKEN="$TOKEN"
-            echo "  Token provided directly."
-        elif [[ -n "$PASSWORD" ]]; then
-            check_or_register "$TARGET" "$USER" "${EMAIL:-${USER}@${TARGET#*://}}" "$PASSWORD"
-        else
-            echo "  Error: --token or --password required."
-            usage
-        fi
-        do_import "$TARGET" "$USER"
-        ;;
-
-    cors)
-        S3_ENDPOINT="" S3_BUCKET="" S3_KEY="" S3_SECRET="" S3_ORIGIN=""
-        while [[ $# -gt 0 ]]; do
-            case "$1" in
-                --s3-endpoint) S3_ENDPOINT="$2"; shift 2 ;;
-                --s3-bucket)   S3_BUCKET="$2";   shift 2 ;;
-                --s3-key)      S3_KEY="$2";       shift 2 ;;
-                --s3-secret)   S3_SECRET="$2";    shift 2 ;;
-                --origin)      S3_ORIGIN="$2";    shift 2 ;;
-                *) echo "Unknown option: $1"; usage ;;
-            esac
-        done
-        [[ -z "$S3_ENDPOINT" || -z "$S3_BUCKET" || -z "$S3_KEY" || \
-           -z "$S3_SECRET"   || -z "$S3_ORIGIN" ]] && usage
-        do_cors "$S3_ENDPOINT" "$S3_BUCKET" "$S3_KEY" "$S3_SECRET" "$S3_ORIGIN"
-        ;;
-
-    gallery)
-        GDIR=""
-        while [[ $# -gt 0 ]]; do
-            case "$1" in
-                --export-dir) GDIR="$2"; shift 2 ;;
-                *) echo "Unknown option: $1"; usage ;;
-            esac
-        done
-        GDIR="${GDIR:-$EXPORT_DIR}"
-        if [[ "${GDIR}" != /* ]]; then GDIR="$(pwd)/${GDIR}"; fi
-        echo "=== GALLERY from ${GDIR} ==="
-        do_gallery "$GDIR"
-        ;;
-
-    full)
-        SOURCE="" SRC_USER="" SRC_PASS="" TARGET="" TGT_USER="" TGT_PASS=""
-        while [[ $# -gt 0 ]]; do
-            case "$1" in
-                --source)          SOURCE="$2";   shift 2 ;;
-                --source-user)     SRC_USER="$2"; shift 2 ;;
-                --source-password) SRC_PASS="$2"; shift 2 ;;
-                --target)          TARGET="$2";   shift 2 ;;
-                --target-user)     TGT_USER="$2"; shift 2 ;;
-                --target-password) TGT_PASS="$2"; shift 2 ;;
-                --debug)           DEBUG=1;        shift   ;;
-                *) echo "Unknown option: $1"; usage ;;
-            esac
-        done
-        [[ -z "$SOURCE" || -z "$SRC_USER" || -z "$SRC_PASS" || \
-           -z "$TARGET" || -z "$TGT_USER" || -z "$TGT_PASS" ]] && usage
-        echo "=== FULL MIGRATION: ${SOURCE} → ${TARGET} ==="
-        api_login "$SOURCE" "$SRC_USER" "$SRC_PASS"
-        do_export "$SOURCE" "$SRC_USER"
-        do_gallery "$EXPORT_DIR"
-        echo ""
-        api_login "$TARGET" "$TGT_USER" "$TGT_PASS"
-        do_import "$TARGET" "$TGT_USER"
-        ;;
-
-    *) echo "Unknown mode: ${MODE}"; usage ;;
-esac
-
-# ---------------------------------------------------------------------------
 # HTML photo album gallery
 # ---------------------------------------------------------------------------
 
@@ -851,13 +687,13 @@ do_gallery() {
     local total_photos
     total_photos=$(echo "$entries" | jq 'length')
 
-    cat > "$out" << HTMLEOF
+    cat > "$out" << 'HTMLEOF'
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>${profile_name} · Photo Archive</title>
+<title>PROFILE_NAME_PLACEHOLDER · Photo Archive</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=DM+Mono:wght@300;400&display=swap');
 
@@ -1386,8 +1222,8 @@ do_gallery() {
 
 <header>
   <div>
-    <div class="header-title"><span>${profile_name}</span> · Photo Archive</div>
-    <div class="header-meta">${profile_account}</div>
+    <div class="header-title"><span>PROFILE_NAME_PLACEHOLDER</span> · Photo Archive</div>
+    <div class="header-meta">PROFILE_ACCOUNT_PLACEHOLDER</div>
   </div>
   <div class="header-controls">
     <div class="search-wrap">
@@ -1399,9 +1235,9 @@ do_gallery() {
 </header>
 
 <div class="stats">
-  <div>Total <strong id="count-total">${total_photos}</strong></div>
-  <div>Visible <strong id="count-visible">${total_photos}</strong></div>
-  <div>Archive generated <strong>$(date '+%Y-%m-%d')</strong></div>
+  <div>Total <strong id="count-total">TOTAL_PHOTOS_PLACEHOLDER</strong></div>
+  <div>Visible <strong id="count-visible">TOTAL_PHOTOS_PLACEHOLDER</strong></div>
+  <div>Archive generated <strong>GENERATED_DATE_PLACEHOLDER</strong></div>
 </div>
 
 <main>
@@ -1714,11 +1550,188 @@ render();
 </html>
 HTMLEOF
 
-    # Inject the actual photo data
-    local json_data
+    # Inject Bash variables and photo data into the generated HTML
+    local json_data generated_date
     json_data=$(echo "$entries" | jq -c '.')
-    sed -i "s|PHOTODATAPLACEHOLDER|${json_data}|" "$out"
+    generated_date=$(date '+%Y-%m-%d')
+
+    # macOS and Linux compatible sed -i
+    local sedi
+    if sed --version 2>/dev/null | grep -q GNU; then
+        sedi() { sed -i "$@"; }
+    else
+        sedi() { sed -i '' "$@"; }
+    fi
+
+    sedi "s|PROFILE_NAME_PLACEHOLDER|${profile_name}|g" "$out"
+    sedi "s|PROFILE_ACCOUNT_PLACEHOLDER|${profile_account}|g" "$out"
+    sedi "s|TOTAL_PHOTOS_PLACEHOLDER|${total_photos}|g" "$out"
+    sedi "s|GENERATED_DATE_PLACEHOLDER|${generated_date}|g" "$out"
+    sedi "s|PHOTODATAPLACEHOLDER|${json_data}|" "$out"
 
     echo "  ✓ Gallery generated → ${out}"
     echo "  ${total_photos} photos — open in your browser to view."
 }
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+usage() {
+    cat <<EOF
+Usage:
+  $0 export  --source URL --user NAME [--password PASS | --token TOKEN] [--debug]
+  $0 import  --target URL --user NAME [--password PASS | --token TOKEN] [--email EMAIL] [--debug]
+  $0 full    --source URL --source-user NAME --source-password PASS \\
+              --target URL --target-user NAME --target-password PASS [--debug]
+  $0 cors    --s3-endpoint URL --s3-bucket NAME --s3-key KEY --s3-secret SECRET --origin URL
+  $0 gallery [--export-dir PATH]
+
+Options:
+  --password PASS   Password for direct login (only works with email+password accounts)
+  --token TOKEN     Pass a Bearer token directly (recommended, always works)
+                    Get the token: Browser → F12 → Network → any /api/v1/ request
+                    → Request Headers → copy "Authorization: Bearer eyJ..."
+  --email EMAIL     Email address for registration on the target instance (open instances only)
+  --debug           Verbose curl output
+  --export-dir PATH Path to export directory for the gallery subcommand (default: vernissage_export)
+
+CORS configuration (run once before importing):
+  $0 cors \\
+    --s3-endpoint https://your.s3.endpoint.tld\\
+    --s3-bucket vernissage-assets \\
+    --s3-key ACCESSKEY \\
+    --s3-secret SECRETKEY \\
+    --origin https://new-instance.example
+
+Resume after interruption:
+  Successfully imported statuses are tracked in '${EXPORT_DIR}/.imported_ids'.
+  Simply re-run the import command – already imported statuses will be skipped.
+  To start fresh: rm ${EXPORT_DIR}/.imported_ids
+
+Typical workflow:
+  Export:           $0 export --source URL --user NAME --token "eyJ..."
+  Set CORS:         $0 cors --s3-endpoint URL --s3-bucket NAME --s3-key K --s3-secret S --origin URL
+  Import:           $0 import --target URL --user NAME --token "eyJ..."
+  Resume:           $0 import --target URL --user NAME --token "eyJ..."  (just re-run)
+EOF
+    exit 1
+}
+
+[[ $# -lt 1 ]] && usage
+MODE="$1"; shift
+
+check_deps
+
+case "$MODE" in
+    export)
+        SOURCE="" USER="" PASSWORD="" TOKEN=""
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                --source)   SOURCE="$2";   shift 2 ;;
+                --user)     USER="$2";     shift 2 ;;
+                --password) PASSWORD="$2"; shift 2 ;;
+                --token)    TOKEN="$2";    shift 2 ;;
+                --debug)    DEBUG=1;       shift   ;;
+                *) echo "Unknown option: $1"; usage ;;
+            esac
+        done
+        [[ -z "$SOURCE" || -z "$USER" ]] && usage
+        echo "=== EXPORT from ${SOURCE} ==="
+        if [[ -n "$TOKEN" ]]; then
+            API_BASE="${SOURCE%/}/api/v1"
+            API_TOKEN="$TOKEN"
+            echo "  Token provided directly."
+        else
+            [[ -z "$PASSWORD" ]] && usage
+            api_login "$SOURCE" "$USER" "$PASSWORD"
+        fi
+        do_export "$SOURCE" "$USER"
+        do_gallery "$EXPORT_DIR"
+        ;;
+
+    import)
+        TARGET="" USER="" EMAIL="" PASSWORD="" TOKEN=""
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                --target)   TARGET="$2";   shift 2 ;;
+                --user)     USER="$2";     shift 2 ;;
+                --email)    EMAIL="$2";    shift 2 ;;
+                --password) PASSWORD="$2"; shift 2 ;;
+                --token)    TOKEN="$2";    shift 2 ;;
+                --debug)    DEBUG=1;       shift   ;;
+                *) echo "Unknown option: $1"; usage ;;
+            esac
+        done
+        [[ -z "$TARGET" || -z "$USER" ]] && usage
+        echo "=== IMPORT to ${TARGET} ==="
+        if [[ -n "$TOKEN" ]]; then
+            API_BASE="${TARGET%/}/api/v1"
+            API_TOKEN="$TOKEN"
+            echo "  Token provided directly."
+        elif [[ -n "$PASSWORD" ]]; then
+            check_or_register "$TARGET" "$USER" "${EMAIL:-${USER}@${TARGET#*://}}" "$PASSWORD"
+        else
+            echo "  Error: --token or --password required."
+            usage
+        fi
+        do_import "$TARGET" "$USER"
+        ;;
+
+    cors)
+        S3_ENDPOINT="" S3_BUCKET="" S3_KEY="" S3_SECRET="" S3_ORIGIN=""
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                --s3-endpoint) S3_ENDPOINT="$2"; shift 2 ;;
+                --s3-bucket)   S3_BUCKET="$2";   shift 2 ;;
+                --s3-key)      S3_KEY="$2";       shift 2 ;;
+                --s3-secret)   S3_SECRET="$2";    shift 2 ;;
+                --origin)      S3_ORIGIN="$2";    shift 2 ;;
+                *) echo "Unknown option: $1"; usage ;;
+            esac
+        done
+        [[ -z "$S3_ENDPOINT" || -z "$S3_BUCKET" || -z "$S3_KEY" || \
+           -z "$S3_SECRET"   || -z "$S3_ORIGIN" ]] && usage
+        do_cors "$S3_ENDPOINT" "$S3_BUCKET" "$S3_KEY" "$S3_SECRET" "$S3_ORIGIN"
+        ;;
+
+    gallery)
+        GDIR=""
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                --export-dir) GDIR="$2"; shift 2 ;;
+                *) echo "Unknown option: $1"; usage ;;
+            esac
+        done
+        GDIR="${GDIR:-$EXPORT_DIR}"
+        if [[ "${GDIR}" != /* ]]; then GDIR="$(pwd)/${GDIR}"; fi
+        echo "=== GALLERY from ${GDIR} ==="
+        do_gallery "$GDIR"
+        ;;
+
+    full)
+        SOURCE="" SRC_USER="" SRC_PASS="" TARGET="" TGT_USER="" TGT_PASS=""
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                --source)          SOURCE="$2";   shift 2 ;;
+                --source-user)     SRC_USER="$2"; shift 2 ;;
+                --source-password) SRC_PASS="$2"; shift 2 ;;
+                --target)          TARGET="$2";   shift 2 ;;
+                --target-user)     TGT_USER="$2"; shift 2 ;;
+                --target-password) TGT_PASS="$2"; shift 2 ;;
+                --debug)           DEBUG=1;        shift   ;;
+                *) echo "Unknown option: $1"; usage ;;
+            esac
+        done
+        [[ -z "$SOURCE" || -z "$SRC_USER" || -z "$SRC_PASS" || \
+           -z "$TARGET" || -z "$TGT_USER" || -z "$TGT_PASS" ]] && usage
+        echo "=== FULL MIGRATION: ${SOURCE} → ${TARGET} ==="
+        api_login "$SOURCE" "$SRC_USER" "$SRC_PASS"
+        do_export "$SOURCE" "$SRC_USER"
+        do_gallery "$EXPORT_DIR"
+        echo ""
+        api_login "$TARGET" "$TGT_USER" "$TGT_PASS"
+        do_import "$TARGET" "$TGT_USER"
+        ;;
+
+    *) echo "Unknown mode: ${MODE}"; usage ;;
+esac
