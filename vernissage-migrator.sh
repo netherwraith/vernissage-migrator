@@ -14,8 +14,6 @@
 #                                  --s3-key ACCESSKEY --s3-secret SECRETKEY \
 #                                  --origin https://new-instance.example
 
-set -uo pipefail
-
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -559,10 +557,43 @@ do_import() {
             desc=$(echo "$att_json" | jq -r '.description // ""')
             desc=$(apply_hashtag_map "$desc")
 
+            # Extract all available metadata from export
+            local loc_lat loc_lon
+            loc_lat=$(echo "$att_json" | jq -r '.location.latitude // ""')
+            loc_lon=$(echo "$att_json" | jq -r '.location.longitude // ""')
+
+            local exif_make exif_model exif_lens exif_exposure exif_aperture
+            local exif_iso exif_focal exif_focal_length exif_create_date
+            exif_make=$(echo         "$att_json" | jq -r '.metadata.exif.make // ""')
+            exif_model=$(echo        "$att_json" | jq -r '.metadata.exif.model // ""')
+            exif_lens=$(echo         "$att_json" | jq -r '.metadata.exif.lens // ""')
+            exif_exposure=$(echo     "$att_json" | jq -r '.metadata.exif.exposureTime // ""')
+            exif_aperture=$(echo     "$att_json" | jq -r '.metadata.exif.fNumber // ""')
+            exif_iso=$(echo          "$att_json" | jq -r '.metadata.exif.photographicSensitivity // ""')
+            exif_focal=$(echo        "$att_json" | jq -r '.metadata.exif.focalLenIn35mmFilm // ""')
+            exif_focal_length=$(echo "$att_json" | jq -r '.metadata.exif.focalLength // ""')
+            exif_create_date=$(echo  "$att_json" | jq -r '.metadata.exif.createDate // ""')
+
+            local license_id
+            license_id=$(echo "$att_json" | jq -r '.license.id // ""')
+
+            # Build multipart upload with correct field names (verified from browser DevTools)
+            local upload_args=(-F "file=@${local_file}" -F "description=${desc}")
+            [[ -n "$loc_lat"          ]] && upload_args+=(-F "latitude=${loc_lat}")
+            [[ -n "$loc_lon"          ]] && upload_args+=(-F "longitude=${loc_lon}")
+            [[ -n "$exif_make"        ]] && upload_args+=(-F "make=${exif_make}")
+            [[ -n "$exif_model"       ]] && upload_args+=(-F "model=${exif_model}")
+            [[ -n "$exif_lens"        ]] && upload_args+=(-F "lens=${exif_lens}")
+            [[ -n "$exif_exposure"    ]] && upload_args+=(-F "exposureTime=${exif_exposure}")
+            [[ -n "$exif_aperture"    ]] && upload_args+=(-F "fNumber=${exif_aperture}")
+            [[ -n "$exif_iso"         ]] && upload_args+=(-F "photographicSensitivity=${exif_iso}")
+            [[ -n "$exif_focal"       ]] && upload_args+=(-F "focalLenIn35mmFilm=${exif_focal}")
+            [[ -n "$exif_focal_length" ]] && upload_args+=(-F "focalLength=${exif_focal_length}")
+            [[ -n "$exif_create_date" ]] && upload_args+=(-F "createDate=${exif_create_date}")
+            [[ -n "$license_id"       ]] && upload_args+=(-F "licenseId=${license_id}")
+
             local upload mid
-            upload=$(api_post_multipart "attachments" \
-                -F "file=@${local_file}" \
-                -F "description=${desc}")
+            upload=$(api_post_multipart "attachments" "${upload_args[@]}")
             mid=$(echo "$upload" | jq -r '.id // empty')
 
             if [[ -n "$mid" ]]; then
@@ -1672,6 +1703,7 @@ EOF
 [[ $# -lt 1 ]] && usage
 MODE="$1"; shift
 
+clear
 check_deps
 
 case "$MODE" in
