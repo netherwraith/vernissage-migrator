@@ -252,6 +252,8 @@ EXPORT_DIR=/path/to/vernissage_export ./vernissage-migrator.sh import \
 
 The Account Move notifies your followers via ActivityPub and redirects them to your new account automatically. This is the recommended and reliable way to transfer your social graph.
 
+**Likes, boosts and comments** — these cannot be migrated. This is a fundamental limitation of the ActivityPub protocol: likes, boosts and comments are tied to the specific post URL on the original instance. When a post is re-published on a new instance, it receives a new ActivityPub ID and URL, making it a different object in the federated network. Any engagement from the old instance cannot be transferred or re-attached to the new post.
+
 **Post timestamps** — Vernissage does not accept a custom `createdAt` for imported statuses. All posts will appear with the import date, not the original post date. The original date is preserved in the post content or description if it was included there.
 
 **Attachments per status** — the script handles multiple attachments per status, but only photos are migrated. Video files follow the same flow but may fail depending on the target instance's configuration.
