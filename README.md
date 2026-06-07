@@ -147,6 +147,7 @@ Generates a self-contained HTML photo album from an existing export. The gallery
 The output file `vernissage_export/gallery.html` opens directly in any browser — no server required. Features include:
 
 - **Grid and list views** with smooth transitions
+- **Light/dark mode toggle** — respects your system preference, manually switchable, setting is remembered
 - **Full-text search** across notes, descriptions, tags, and locations
 - **Lightbox** with keyboard navigation (← → Esc)
 - **EXIF data** — camera, shutter speed, aperture, ISO, focal length
