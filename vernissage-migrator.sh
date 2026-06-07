@@ -714,7 +714,38 @@ do_gallery() {
     --font-mono: 'DM Mono', 'Courier New', monospace;
   }
 
+  html.light {
+    --bg: #f5f2ee;
+    --surface: #ffffff;
+    --surface2: #ede9e4;
+    --border: #d8d2c8;
+    --text: #1a1714;
+    --text-muted: #8a8078;
+    --accent: #a07840;
+    --accent2: #4a8070;
+    --danger: #c0604a;
+  }
+
   html { scroll-behavior: smooth; }
+
+  /* Theme toggle button */
+  .theme-btn {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    font-size: 15px;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition: all 0.2s;
+    flex-shrink: 0;
+  }
+
+  .theme-btn:hover { border-color: var(--accent); color: var(--accent); }
 
   body {
     background: var(--bg);
@@ -1231,6 +1262,7 @@ do_gallery() {
     </div>
     <button class="view-btn active" id="btn-grid" onclick="setView('grid')">Grid</button>
     <button class="view-btn" id="btn-list" onclick="setView('list')">List</button>
+    <button class="theme-btn" id="btn-theme" onclick="toggleTheme()" title="Toggle light/dark mode">☀︎</button>
   </div>
 </header>
 
@@ -1281,8 +1313,26 @@ do_gallery() {
   <button class="lb-nav" id="lb-next" onclick="lbNav(1)">›</button>
 </div>
 
+<script src="gallery_data.js"></script>
 <script>
-const DATA = PHOTODATAPLACEHOLDER;
+
+// Theme toggle
+function toggleTheme() {
+  const isLight = document.documentElement.classList.toggle('light');
+  document.getElementById('btn-theme').textContent = isLight ? '☾' : '☀︎';
+  localStorage.setItem('gallery-theme', isLight ? 'light' : 'dark');
+}
+
+// Apply saved or system preference on load
+(function() {
+  const saved = localStorage.getItem('gallery-theme');
+  const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  const useDark = saved ? saved === 'dark' : prefersDark;
+  if (!useDark) {
+    document.documentElement.classList.add('light');
+    document.getElementById('btn-theme').textContent = '☾';
+  }
+})();
 
 let currentView = 'grid';
 let visibleCards = [];
@@ -1296,7 +1346,7 @@ function formatDate(iso) {
 
 function imgSrc(att) {
   if (att.local_file) {
-    const rel = att.local_file.replace(/^.*vernissage_export\//, 'photos/');
+    const rel = att.local_file.replace(/^.*vernissage_export\/photos\//, 'photos/');
     return rel;
   }
   return '';
@@ -1550,10 +1600,13 @@ render();
 </html>
 HTMLEOF
 
-    # Inject Bash variables and photo data into the generated HTML
+    # Write photo data as separate JSON file to avoid sed escaping issues
     local json_data generated_date
     json_data=$(echo "$entries" | jq -c '.')
     generated_date=$(date '+%Y-%m-%d')
+
+    # Write the photo data to a separate JS file
+    echo "const DATA = ${json_data};" > "${export_dir}/gallery_data.js"
 
     # macOS and Linux compatible sed -i
     local sedi
@@ -1567,7 +1620,6 @@ HTMLEOF
     sedi "s|PROFILE_ACCOUNT_PLACEHOLDER|${profile_account}|g" "$out"
     sedi "s|TOTAL_PHOTOS_PLACEHOLDER|${total_photos}|g" "$out"
     sedi "s|GENERATED_DATE_PLACEHOLDER|${generated_date}|g" "$out"
-    sedi "s|PHOTODATAPLACEHOLDER|${json_data}|" "$out"
 
     echo "  ✓ Gallery generated → ${out}"
     echo "  ${total_photos} photos — open in your browser to view."
