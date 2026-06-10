@@ -26,6 +26,7 @@ fi
 
 REQUEST_DELAY=0.5   # Seconds between API calls
 DEBUG=0             # Set to 1 for verbose curl output
+LOCAL_ONLY=0        # Set to 1 to suppress federation (--local flag)
 
 # Hashtag mapping: entries of the form "#old=#new"
 # Example: HASHTAG_MAP=("#sourceinstance=#targetinstance")
@@ -617,6 +618,12 @@ do_import() {
         visibility=$(echo "$status_json" | jq -r '.visibility // "public"')
         sensitive=$(echo "$status_json" | jq -r '.sensitive // false')
         comments_disabled=$(echo "$status_json" | jq -r '.commentsDisabled // false')
+
+        # --local flag: override visibility to quietPublic
+        # Posts are added to the profile only and not federated via ActivityPub.
+        # Rate limit drops from 60s to 1s, making imports significantly faster.
+        [[ "$LOCAL_ONLY" -eq 1 ]] && visibility="quietPublic"
+
         post_data=$(jq -n \
             --arg note "$note" \
             --arg vis "$visibility" \
@@ -1675,6 +1682,10 @@ Options:
                     Get the token: Browser → F12 → Network → any /api/v1/ request
                     → Request Headers → copy "Authorization: Bearer eyJ..."
   --email EMAIL     Email address for registration on the target instance (open instances only)
+  --local           Import in local-only mode: sets visibility to "quietPublic" so posts
+                    appear on your profile but are not federated to followers' timelines.
+                    Also reduces the rate limit from 60s to 1s between posts, making
+                    large imports significantly faster. Recommended for historical photos.
   --debug           Verbose curl output
   --export-dir PATH Path to export directory for the gallery subcommand (default: vernissage_export)
 
@@ -1742,6 +1753,7 @@ case "$MODE" in
                 --email)    EMAIL="$2";    shift 2 ;;
                 --password) PASSWORD="$2"; shift 2 ;;
                 --token)    TOKEN="$2";    shift 2 ;;
+                --local)    LOCAL_ONLY=1;  shift   ;;
                 --debug)    DEBUG=1;       shift   ;;
                 *) echo "Unknown option: $1"; usage ;;
             esac
@@ -1758,6 +1770,7 @@ case "$MODE" in
             echo "  Error: --token or --password required."
             usage
         fi
+        [[ "$LOCAL_ONLY" -eq 1 ]] && echo "  Local-only mode: posts will not be federated."
         do_import "$TARGET" "$USER"
         ;;
 

@@ -130,9 +130,20 @@ Imports photos and statuses to the target instance. Supports resuming after inte
 | `--token TOKEN` | Bearer token from the target instance |
 | `--password PASS` | Password (triggers auto-registration if account doesn't exist) |
 | `--email EMAIL` | Email for registration (used with `--password` on open instances) |
+| `--local` | Local-only mode: sets visibility to `quietPublic`. Posts appear on your profile but are not federated to followers' timelines and not sent via ActivityPub. Also reduces the rate limit between posts from 60 s to 1 s, making large imports significantly faster. Recommended for historical photos. |
 | `--debug` | Verbose curl output |
 
 The script handles rate limiting automatically: if the server responds with HTTP 429, it reads the `waitSeconds` value from the response and retries after the specified delay (up to 10 attempts per status).
+
+**Local-only mode** is strongly recommended for most migrations. Without it, every imported post is federated via ActivityPub and appears in the timelines of all your followers — which can cause significant noise for 100+ photos. With `--local`, visibility is set to `quietPublic`: posts are visible on your profile but not federated, and the rate limit drops from 60 s to 1 s per post, making the import many times faster:
+
+```bash
+./vernissage-migrator.sh import \
+  --target https://new-instance.example \
+  --user myuser \
+  --token "eyJ..." \
+  --local
+```
 
 ### `gallery`
 
