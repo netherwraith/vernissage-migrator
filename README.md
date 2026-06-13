@@ -311,3 +311,13 @@ Grab a fresh token from the browser and re-run the import. The resume file ensur
 ## License
 
 MIT
+
+## Star History
+
+<a href="https://www.star-history.com/?repos=netherwraith%2Fvernissage-migrator&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=netherwraith/vernissage-migrator&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=netherwraith/vernissage-migrator&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=netherwraith/vernissage-migrator&type=date&legend=top-left" />
+ </picture>
+</a>
