@@ -18,7 +18,7 @@
 # Configuration
 # ---------------------------------------------------------------------------
 
-EXPORT_DIR="vernissage_export"
+EXPORT_DIR="${EXPORT_DIR:-vernissage_export}"
 # Ensure absolute path (also works when EXPORT_DIR is passed via environment variable)
 if [[ "${EXPORT_DIR}" != /* ]]; then
     EXPORT_DIR="$(pwd)/${EXPORT_DIR}"
@@ -75,7 +75,7 @@ json_escape() {
 # Check whether a status ID has already been imported
 is_imported() {
     local sid="$1"
-    [[ -f "$RESUME_FILE" ]] && grep -qF "$sid" "$RESUME_FILE"
+    [[ -f "$RESUME_FILE" ]] && grep -qxF -- "$sid" "$RESUME_FILE"
 }
 
 # Mark a status ID as imported
@@ -147,15 +147,21 @@ api_get_paginated() {
         [[ -n "$max_id" ]] && params="${params}&maxId=${max_id}"
         rdelay
         local page
-        page=$(curl -sf "${API_BASE}/${path}?${params}" \
+        if ! page=$(curl -sf "${API_BASE}/${path}?${params}" \
             -H "Accept: application/json" \
-            -H "Authorization: Bearer ${API_TOKEN}" || echo "[]")
+            -H "Authorization: Bearer ${API_TOKEN}"); then
+            echo "  ✗ GET ${path} failed while fetching a paginated response." >&2
+            return 1
+        fi
 
         local items
         if echo "$page" | jq -e 'type == "array"' &>/dev/null; then
             items="$page"
         else
-            items=$(echo "$page" | jq '.data // .items // []')
+            if ! items=$(echo "$page" | jq -e '(.data // .items) | select(type == "array")'); then
+                echo "  ✗ GET ${path} returned an unexpected paginated response." >&2
+                return 1
+            fi
         fi
 
         local count
@@ -288,7 +294,9 @@ do_cors() {
 
 do_export() {
     local source_url="$1" username="$2"
-    mkdir -p "${EXPORT_DIR}/photos"
+    local staging_dir
+    staging_dir=$(mktemp -d)
+    mkdir -p "${staging_dir}/photos"
 
     echo ""
     echo "[1/4] Fetching profile ..."
@@ -297,21 +305,27 @@ do_export() {
     if [[ -z "$profile" || "$(echo "$profile" | jq -r '.account // empty')" == "" ]]; then
         echo "  ✗ Could not load profile: ${profile}"
         echo "  Hint: Token expired? Grab a fresh one from browser DevTools."
+        rm -rf "$staging_dir"
         exit 1
     fi
-    echo "$profile" > "${EXPORT_DIR}/profile.json"
     echo "  ✓ $(echo "$profile" | jq -r '.account // .userName')"
 
     local account_id
     account_id=$(echo "$profile" | jq -r '.id // empty')
     if [[ -z "$account_id" ]]; then
-        echo "  ✗ No ID found in profile."; exit 1
+        echo "  ✗ No ID found in profile."
+        rm -rf "$staging_dir"
+        exit 1
     fi
 
     echo ""
     echo "[2/4] Fetching statuses (photos) ..."
     local statuses
-    statuses=$(api_get_paginated "users/${username}/statuses")
+    if ! statuses=$(api_get_paginated "users/${username}/statuses"); then
+        rm -rf "$staging_dir"
+        echo "  ✗ Export aborted; existing export files were left unchanged."
+        exit 1
+    fi
     local count
     count=$(echo "$statuses" | jq 'length')
     echo "  ${count} statuses found."
@@ -330,16 +344,20 @@ do_export() {
                 ext="${ext%%\?*}"
                 ext="${ext:0:4}"
                 local fname
-                fname="${EXPORT_DIR}/photos/${sid}_${att_index}.${ext}"
+                local relative_file="photos/${sid}_${att_index}.${ext}"
+                fname="${staging_dir}/${relative_file}"
                 if curl -sfL -o "$fname" "$url"; then
-                    echo "  Photo: ${fname##*/}"
+                    echo "  Photo: ${relative_file##*/}"
                     updated_statuses=$(echo "$updated_statuses" | jq \
                         --arg sid "$sid" \
                         --argjson idx "$att_index" \
-                        --arg lf "$fname" \
+                        --arg lf "$relative_file" \
                         '(.[] | select(.id == $sid) | .attachments[$idx]._local_file) |= $lf')
                 else
                     echo "  ✗ Download failed: ${url}"
+                    rm -rf "$staging_dir"
+                    echo "  ✗ Export aborted; existing export files were left unchanged."
+                    exit 1
                 fi
                 att_index=$((att_index + 1))
             fi
@@ -347,21 +365,38 @@ do_export() {
 
     done < <(echo "$statuses" | jq -c '.[]')
 
-    echo "$updated_statuses" | jq '.' > "${EXPORT_DIR}/statuses.json"
-
     echo ""
     echo "[3/4] Fetching following list ..."
     local following
-    following=$(api_get_paginated "users/${username}/following")
-    echo "$following" > "${EXPORT_DIR}/following.json"
+    if ! following=$(api_get_paginated "users/${username}/following"); then
+        rm -rf "$staging_dir"
+        echo "  ✗ Export aborted; existing export files were left unchanged."
+        exit 1
+    fi
     echo "  $(echo "$following" | jq 'length') accounts."
 
     echo ""
     echo "[4/4] Fetching followers list ..."
     local followers
-    followers=$(api_get_paginated "users/${username}/followers")
-    echo "$followers" > "${EXPORT_DIR}/followers.json"
+    if ! followers=$(api_get_paginated "users/${username}/followers"); then
+        rm -rf "$staging_dir"
+        echo "  ✗ Export aborted; existing export files were left unchanged."
+        exit 1
+    fi
     echo "  $(echo "$followers" | jq 'length') followers."
+
+    echo "$profile" | jq '.' > "${staging_dir}/profile.json"
+    echo "$updated_statuses" | jq '.' > "${staging_dir}/statuses.json"
+    echo "$following" | jq '.' > "${staging_dir}/following.json"
+    echo "$followers" | jq '.' > "${staging_dir}/followers.json"
+
+    mkdir -p "${EXPORT_DIR}/photos"
+    find "${staging_dir}/photos" -type f -exec mv {} "${EXPORT_DIR}/photos/" \;
+    mv "${staging_dir}/profile.json" "${EXPORT_DIR}/profile.json"
+    mv "${staging_dir}/statuses.json" "${EXPORT_DIR}/statuses.json"
+    mv "${staging_dir}/following.json" "${EXPORT_DIR}/following.json"
+    mv "${staging_dir}/followers.json" "${EXPORT_DIR}/followers.json"
+    rm -rf "$staging_dir"
 
     echo ""
     echo "✓ Export complete → ${EXPORT_DIR}"
@@ -545,9 +580,12 @@ do_import() {
         while IFS= read -r att_json; do
             local local_file
             local_file=$(echo "$att_json" | jq -r '._local_file // empty')
+            if [[ -n "$local_file" && "$local_file" != /* ]]; then
+                local_file="${EXPORT_DIR}/${local_file}"
+            fi
             if [[ -n "$local_file" && ! -f "$local_file" ]]; then
-                local alt
-                alt="$(dirname "$EXPORT_DIR")/$local_file"
+                # Backwards compatibility for exports that stored an absolute path.
+                local alt="${EXPORT_DIR}/photos/${local_file##*/}"
                 [[ -f "$alt" ]] && local_file="$alt"
             fi
             if [[ -z "$local_file" || ! -f "$local_file" ]]; then
@@ -608,8 +646,10 @@ do_import() {
 
         local media_count
         media_count=$(echo "$media_ids" | jq 'length')
-        if [[ "$media_count" -eq 0 ]]; then
-            skipped=$((skipped + 1)); continue
+        if [[ "$media_count" -ne "$att_count" ]]; then
+            echo "  [${current}/${total}] ✗ Uploaded ${media_count}/${att_count} attachments; status was not published."
+            failed=$((failed + 1))
+            continue
         fi
 
         local note visibility sensitive comments_disabled post_data
@@ -633,7 +673,7 @@ do_import() {
             '{note: $note, visibility: $vis, sensitive: $sens,
               commentsDisabled: $cd, attachmentIds: $mids}')
 
-        local new_status new_id attempts=0 max_attempts=10
+        local new_status new_id attempts=0 max_attempts=10 post_succeeded=0
         while [[ $attempts -lt $max_attempts ]]; do
             new_status=$(api_post_json "statuses" "$post_data")
             new_id=$(echo "$new_status" | jq -r '.id // empty')
@@ -641,6 +681,7 @@ do_import() {
                 published=$((published + 1))
                 mark_imported "$sid"
                 echo "  [${current}/${total}] ✓ Status published: ${new_id}"
+                post_succeeded=1
                 break
             fi
             local wait_seconds
@@ -655,6 +696,10 @@ do_import() {
                 break
             fi
         done
+        if [[ "$post_succeeded" -eq 0 && "$attempts" -ge "$max_attempts" ]]; then
+            echo "  [${current}/${total}] ✗ Status post failed after ${max_attempts} rate-limit retries."
+            failed=$((failed + 1))
+        fi
 
     done < "${tmp_dir}/all.ndjson"
 
@@ -694,30 +739,27 @@ do_gallery() {
 
     local entries
     entries=$(jq -c '[
-        .[] |
-        select((.attachments | length) > 0) |
+        .[] as $status |
+        $status.attachments[]? |
         {
-            id: .id,
-            note: (.note // ""),
-            createdAt: (.createdAt // ""),
-            visibility: (.visibility // "public"),
-            sensitive: (.sensitive // false),
-            tags: ([.tags[]?.name] // []),
-            attachments: [
-                .attachments[] |
-                {
-                    local_file: (._local_file // ""),
-                    description: (.description // ""),
-                    location_name: (.location.name // ""),
-                    location_country: (.location.country.name // ""),
-                    exif_make: (.metadata.exif.make // ""),
-                    exif_model: (.metadata.exif.model // ""),
-                    exif_exposure: (.metadata.exif.exposureTime // ""),
-                    exif_aperture: (.metadata.exif.fNumber // ""),
-                    exif_iso: (.metadata.exif.photographicSensitivity // ""),
-                    exif_focal: (.metadata.exif.focalLenIn35mmFilm // "")
-                }
-            ]
+            id: $status.id,
+            note: ($status.note // ""),
+            createdAt: ($status.createdAt // ""),
+            visibility: ($status.visibility // "public"),
+            sensitive: ($status.sensitive // false),
+            tags: ([$status.tags[]?.name] // []),
+            attachments: [{
+                local_file: (._local_file // ""),
+                description: (.description // ""),
+                location_name: (.location.name // ""),
+                location_country: (.location.country.name // ""),
+                exif_make: (.metadata.exif.make // ""),
+                exif_model: (.metadata.exif.model // ""),
+                exif_exposure: (.metadata.exif.exposureTime // ""),
+                exif_aperture: (.metadata.exif.fNumber // ""),
+                exif_iso: (.metadata.exif.photographicSensitivity // ""),
+                exif_focal: (.metadata.exif.focalLenIn35mmFilm // "")
+            }]
         }
     ] | sort_by(.createdAt)' "$clean_statuses")
     rm -f "$clean_statuses"
@@ -731,7 +773,7 @@ do_gallery() {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>PROFILE_NAME_PLACEHOLDER · Photo Archive</title>
+<title>Photo Archive</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=DM+Mono:wght@300;400&display=swap');
 
@@ -1291,8 +1333,8 @@ do_gallery() {
 
 <header>
   <div>
-    <div class="header-title"><span>PROFILE_NAME_PLACEHOLDER</span> · Photo Archive</div>
-    <div class="header-meta">PROFILE_ACCOUNT_PLACEHOLDER</div>
+    <div class="header-title"><span id="profile-name"></span> · Photo Archive</div>
+    <div class="header-meta" id="profile-account"></div>
   </div>
   <div class="header-controls">
     <div class="search-wrap">
@@ -1376,6 +1418,12 @@ let currentView = 'grid';
 let visibleCards = [];
 let lbIndex = 0;
 
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, char => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  })[char]);
+}
+
 function formatDate(iso) {
   if (!iso) return '';
   const d = new Date(iso);
@@ -1384,8 +1432,12 @@ function formatDate(iso) {
 
 function imgSrc(att) {
   if (att.local_file) {
-    const rel = att.local_file.replace(/^.*vernissage_export\/photos\//, 'photos/');
-    return rel;
+    const normalized = att.local_file.replace(/\\/g, '/');
+    const marker = '/photos/';
+    const markerIndex = normalized.lastIndexOf(marker);
+    if (markerIndex !== -1) return 'photos/' + normalized.slice(markerIndex + marker.length);
+    if (normalized.startsWith('photos/')) return normalized;
+    return 'photos/' + normalized.split('/').pop();
   }
   return '';
 }
@@ -1397,11 +1449,11 @@ function renderCard(entry, idx) {
 
   const date = formatDate(entry.createdAt);
   const tags = entry.tags.map(t =>
-    `<span class="tag" onclick="filterTag('${t}')">#${t}</span>`
+    `<span class="tag" data-filter-tag="${escapeHtml(t)}">#${escapeHtml(t)}</span>`
   ).join('');
 
   const loc = att.location_name
-    ? `<span class="location-chip">${att.location_name}${att.location_country ? ', ' + att.location_country : ''}</span>`
+    ? `<span class="location-chip">${escapeHtml(att.location_name)}${att.location_country ? ', ' + escapeHtml(att.location_country) : ''}</span>`
     : '';
 
   const hasExif = att.exif_make || att.exif_model || att.exif_exposure;
@@ -1410,27 +1462,26 @@ function renderCard(entry, idx) {
     : '';
 
   const noteHtml = entry.note
-    ? `<div class="card-note">${entry.note.replace(/<[^>]+>/g, '').substring(0, 200)}</div>`
+    ? `<div class="card-note">${escapeHtml(entry.note.replace(/<[^>]+>/g, '').substring(0, 200))}</div>`
     : '';
 
   const descHtml = att.description
-    ? `<div class="card-desc">${att.description.substring(0, 150)}</div>`
+    ? `<div class="card-desc">${escapeHtml(att.description.substring(0, 150))}</div>`
     : '';
 
   const sensitiveOverlay = entry.sensitive
-    ? `<div class="card-sensitive-overlay" onclick="revealSensitive(this)">⚠ Sensitive — click to reveal</div>`
+    ? `<div class="card-sensitive-overlay">⚠ Sensitive — click to reveal</div>`
     : '';
 
   return `
     <div class="card" data-idx="${idx}"
-         data-note="${entry.note.replace(/"/g,'&quot;').toLowerCase()}"
-         data-tags="${entry.tags.join(' ').toLowerCase()}"
-         data-loc="${(att.location_name||'').toLowerCase()}"
-         onclick="openLb(${idx})">
+         data-note="${escapeHtml(entry.note.toLowerCase())}"
+         data-tags="${escapeHtml(entry.tags.join(' ').toLowerCase())}"
+         data-loc="${escapeHtml((att.location_name||'').toLowerCase())}">
       <div class="card-image-wrap">
         ${sensitiveOverlay}
-        <img src="${src}" alt="${att.description || ''}" loading="lazy">
-        <button class="copy-btn" onclick="event.stopPropagation(); copyCardImage('${src}', this)">Copy</button>
+        <img src="${escapeHtml(src)}" alt="${escapeHtml(att.description || '')}" loading="lazy">
+        <button class="copy-btn" data-copy-src="${escapeHtml(src)}">Copy</button>
       </div>
       <div class="card-body">
         ${noteHtml}
@@ -1441,7 +1492,7 @@ function renderCard(entry, idx) {
           <span class="date-chip">${date}</span>
         </div>
       </div>
-      ${exifText ? `<div class="exif-strip"><span>${exifText}</span></div>` : ''}
+      ${exifText ? `<div class="exif-strip"><span>${escapeHtml(exifText)}</span></div>` : ''}
     </div>`;
 }
 
@@ -1486,7 +1537,7 @@ function setView(v) {
 }
 
 function filterTag(tag) {
-  document.getElementById('search').value = '#' + tag;
+  document.getElementById('search').value = tag;
   render();
 }
 
@@ -1537,7 +1588,7 @@ function showLb() {
   const tagsEl = document.getElementById('lb-tags');
   if (entry.tags.length) {
     tagsEl.innerHTML = entry.tags.map(t =>
-      `<span class="tag" onclick="closeLb(); filterTag('${t}')">#${t}</span>`
+      `<span class="tag" data-filter-tag="${escapeHtml(t)}">#${escapeHtml(t)}</span>`
     ).join('');
     tagsSec.style.display = '';
   } else {
@@ -1557,7 +1608,7 @@ function showLb() {
 
   if (exifItems.length) {
     exifEl.innerHTML = exifItems.map(i =>
-      `<div class="lb-exif-item"><strong>${i.val}</strong>${i.label}</div>`
+      `<div class="lb-exif-item"><strong>${escapeHtml(i.val)}</strong>${escapeHtml(i.label)}</div>`
     ).join('');
     exifSec.style.display = '';
   } else {
@@ -1631,6 +1682,41 @@ document.getElementById('lightbox').addEventListener('click', e => {
 // Search
 document.getElementById('search').addEventListener('input', render);
 
+// Handle dynamic gallery controls without embedding exported data in JavaScript handlers.
+document.getElementById('gallery').addEventListener('click', event => {
+  const sensitiveOverlay = event.target.closest('.card-sensitive-overlay');
+  if (sensitiveOverlay) {
+    revealSensitive(sensitiveOverlay);
+    return;
+  }
+
+  const copyButton = event.target.closest('.copy-btn');
+  if (copyButton) {
+    copyCardImage(copyButton.dataset.copySrc, copyButton);
+    return;
+  }
+
+  const tag = event.target.closest('[data-filter-tag]');
+  if (tag) {
+    filterTag(tag.dataset.filterTag);
+    return;
+  }
+
+  const card = event.target.closest('.card');
+  if (card) openLb(Number(card.dataset.idx));
+});
+
+document.getElementById('lb-tags').addEventListener('click', event => {
+  const tag = event.target.closest('[data-filter-tag]');
+  if (!tag) return;
+  closeLb();
+  filterTag(tag.dataset.filterTag);
+});
+
+document.getElementById('profile-name').textContent = PROFILE.name;
+document.getElementById('profile-account').textContent = PROFILE.account;
+document.title = `${PROFILE.name} · Photo Archive`;
+
 // Init
 render();
 </script>
@@ -1643,8 +1729,12 @@ HTMLEOF
     json_data=$(echo "$entries" | jq -c '.')
     generated_date=$(date '+%Y-%m-%d')
 
-    # Write the photo data to a separate JS file
-    echo "const DATA = ${json_data};" > "${export_dir}/gallery_data.js"
+    # Write profile and photo data to a separate JS file. jq provides safe JSON encoding.
+    local profile_data
+    profile_data=$(jq -cn --arg name "$profile_name" --arg account "$profile_account" \
+        '{name: $name, account: $account}')
+    printf 'const PROFILE = %s;\nconst DATA = %s;\n' "$profile_data" "$json_data" \
+        > "${export_dir}/gallery_data.js"
 
     # macOS and Linux compatible sed -i
     local sedi
@@ -1654,8 +1744,6 @@ HTMLEOF
         sedi() { sed -i '' "$@"; }
     fi
 
-    sedi "s|PROFILE_NAME_PLACEHOLDER|${profile_name}|g" "$out"
-    sedi "s|PROFILE_ACCOUNT_PLACEHOLDER|${profile_account}|g" "$out"
     sedi "s|TOTAL_PHOTOS_PLACEHOLDER|${total_photos}|g" "$out"
     sedi "s|GENERATED_DATE_PLACEHOLDER|${generated_date}|g" "$out"
 
