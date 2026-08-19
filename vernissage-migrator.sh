@@ -1799,10 +1799,11 @@ EOF
     exit 1
 }
 
+main() {
 [[ $# -lt 1 ]] && usage
 MODE="$1"; shift
 
-clear
+[[ -t 1 ]] && clear
 check_deps
 
 case "$MODE" in
@@ -1920,3 +1921,8 @@ case "$MODE" in
 
     *) echo "Unknown mode: ${MODE}"; usage ;;
 esac
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi

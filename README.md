@@ -29,6 +29,17 @@ sudo apt install curl jq
 brew install jq
 ```
 
+## Tests
+
+Run the regression suite with:
+
+```bash
+bash tests/regression.sh
+```
+
+The gallery JavaScript syntax check additionally requires Node.js. Migration itself
+still only requires `curl` and `jq`.
+
 ## Quick Start
 
 ```bash
